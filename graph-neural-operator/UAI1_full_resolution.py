@@ -33,8 +33,8 @@ class KernelNN(torch.nn.Module):
         return x
 
 
-TRAIN_PATH = './data/piececonst_r241_N1024_smooth1.mat'
-TEST_PATH = './data/piececonst_r241_N1024_smooth2.mat'
+TRAIN_PATH = './datasets/piececonst_r241_N1024_smooth1.mat'
+TEST_PATH = './datasets/piececonst_r241_N1024_smooth2.mat'
 
 r = 4
 s = int(((241 - 1)/r) + 1)
