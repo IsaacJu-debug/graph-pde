@@ -356,10 +356,13 @@ class NNConv_old(MessagePassing):
         """"""
         x = x.unsqueeze(-1) if x.dim() == 1 else x
         pseudo = edge_attr.unsqueeze(-1) if edge_attr.dim() == 1 else edge_attr
+        print('pseudo (edge attribute {})'.format(pseudo.shape))
         return self.propagate(edge_index, x=x, pseudo=pseudo)
 
     def message(self, x_j, pseudo):
         weight = self.nn(pseudo).view(-1, self.in_channels, self.out_channels)
+        print('x_j shape {}'.format(x_j.shape))
+        print('weight shape {}'.format(weight.shape))
         return torch.matmul(x_j.unsqueeze(1), weight).squeeze(1)
 
     def update(self, aggr_out, x):

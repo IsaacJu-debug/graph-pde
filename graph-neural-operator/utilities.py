@@ -203,11 +203,12 @@ class DenseNet(torch.nn.Module):
         super(DenseNet, self).__init__()
 
         self.n_layers = len(layers) - 1
-
+        
         assert self.n_layers >= 1
 
         self.layers = nn.ModuleList()
-
+        print('kernel nn layers {}'.format(layers[:]))
+        
         for j in range(self.n_layers):
             self.layers.append(nn.Linear(layers[j], layers[j+1]))
 
