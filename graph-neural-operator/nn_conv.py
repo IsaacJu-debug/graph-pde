@@ -2,12 +2,15 @@ import torch
 from torch.nn import Parameter
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.nn.inits import reset, uniform
+from torch.nn import Sequential, Linear, ReLU, LayerNorm
+import torch_scatter
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+class ProcessorLayer(MessagePassing):
+    """ The Processor layer in the MGN model. This layer is used to update the node embeddings and edge embeddings.
+    """
 
-class MGNLayer(MessagePassing):
-    
     def __init__(self, in_channels, out_channels,  **kwargs):
         super(ProcessorLayer, self).__init__(  **kwargs )
         """
@@ -87,10 +90,67 @@ class MGNLayer(MessagePassing):
 
         # The axis along which to index number of nodes.
         node_dim = 0
-
-        out = torch_scatter.scatter(updated_edges, edge_index[0, :], dim=node_dim, reduce = 'sum')
+        out = torch_scatter.scatter(updated_edges, 
+                                    edge_index[0, :],
+                                    dim=node_dim, 
+                                    reduce = self.aggr)
 
         return out, updated_edges
+
+class ProcessorOperatorLayer(MessagePassing):
+    def __init__(self, in_channels, out_channels, nn, aggr='add', **kwargs):
+        super(ProcessorLayer, self).__init__(aggr=aggr, **kwargs)
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.nn = nn
+
+        # This MLP will process the node features after message passing
+        self.node_mlp = Sequential(
+            Linear(2 * in_channels, out_channels),
+            ReLU(),
+            Linear(out_channels, out_channels),
+            LayerNorm(out_channels)
+        )
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        # Reset parameters of the neural network for edge weighting
+        reset(self.nn)
+        # Reset parameters of the node MLP
+        self.node_mlp.apply(self.weights_init)
+
+    def weights_init(self, m):
+        if isinstance(m, Linear):
+            uniform(m.weight.size(0), m.weight)
+            if m.bias is not None:
+                m.bias.data.fill_(0)
+
+    def forward(self, x, edge_index, edge_attr):
+        # Propagate messages using the edge indices and the dynamically computed edge weights
+        out = self.propagate(edge_index, x=x, edge_attr=edge_attr)
+
+        # Post-processing of node features after message passing
+        updated_nodes = torch.cat([x, out], dim=1)
+        updated_nodes = x + self.node_mlp(updated_nodes)  # Residual connection
+
+        return updated_nodes
+
+    def message(self, x_j, edge_attr):
+        # Compute the edge weights using the neural network
+        weight = self.nn(edge_attr).view(-1, self.in_channels, self.out_channels)
+
+        # Update the node features using the computed weights
+        return torch.matmul(x_j.unsqueeze(1), weight).squeeze(1)
+
+    def aggregate(self, inputs, index, dim_size=None):
+        # The aggregation function as specified by 'self.aggr', e.g., sum, mean, or max.
+        node_dim = self.node_dim
+        return torch_scatter.scatter(inputs, index, dim=node_dim, dim_size=dim_size, reduce=self.aggr)
+
+    def __repr__(self):
+        return '{}(in_channels={}, out_channels={})'.format(self.__class__.__name__, self.in_channels, self.out_channels)
 
 
 class NNConv(MessagePassing):
