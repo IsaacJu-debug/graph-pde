@@ -190,7 +190,7 @@ def main(args):
 
 if __name__ == '__main__':
     # Input arguments
-    argparser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser()
     
     # Model and data-related arguments
     parser.add_argument('--model', type=str, default='mgk_gno', help='Model identifier.')
@@ -232,10 +232,9 @@ if __name__ == '__main__':
 
     
     # random seed
-    argparser.add_argument('--seed_list', help='delimited list input',
-                            type=str, default = '') #
-    argparser.add_argument('--seed', type=int, help='', default=5)
+    parser.add_argument('--seed', type=int, help='', default=5)
+    args = parser.parse_args()
     
-    args = argparser.parse_args()
-
+    # setup random seed
+    torch.manual_seed()
     main(args)
