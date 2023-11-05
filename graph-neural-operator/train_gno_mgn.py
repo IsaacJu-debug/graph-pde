@@ -236,5 +236,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     # setup random seed
-    torch.manual_seed()
+    torch.manual_seed(args.seed)  #Torch
+    random.seed(args.seed)        #Python
+    np.random.seed(args.seed)     #NumPy
+
     main(args)
