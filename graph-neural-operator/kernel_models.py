@@ -183,6 +183,7 @@ class NolocalKernelNN(torch.nn.Module):
     def __init__(self, width, ker_width, depth, ker_in, in_width=1, out_width=1,batch_size = 2,grid = None):
         super(NolocalKernelNN, self).__init__()
         self.depth = depth
+        self.width = width
         #print("in_width: %d" % in_width)
         self.fc1 = torch.nn.Linear(in_width, width)
         self.Bx = DenseNet([width, ker_width//2, ker_width, width**2], torch.nn.ReLU) 
@@ -202,7 +203,7 @@ class NolocalKernelNN(torch.nn.Module):
             # reaction terms
             #print('x shape {}'.format(x.shape))
             x = self.conv1(x, edge_index, edge_attr)/self.depth + \
-                 (torch.matmul(self.Bx(x).view(-1,width,width), x.unsqueeze(2)).squeeze()-x)/self.depth + x
+                 (torch.matmul(self.Bx(x).view(-1, self.width, self.width), x.unsqueeze(2)).squeeze()-x)/self.depth + x
         #x = self.conv2(x, edge_index, edge_attr)
         #x = self.conv3(x, edge_index, edge_attr)
         #x = self.conv4(x, edge_index, edge_attr)

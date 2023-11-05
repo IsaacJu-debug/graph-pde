@@ -1,4 +1,5 @@
 import torch
+import os
 import numpy as np
 import scipy.io
 import h5py
@@ -1058,3 +1059,32 @@ def multi_grid(depth, n_x, n_y, grid, params):
     # print('create multi_grid with size:', X.shape,  edge_index.shape, edge_attr.shape, mask_index.shape)
 
     return (X, edge_index, edge_attr, mask_index, num_nodes)
+
+from torchsummary import summary
+def gnn_model_summary(model, args, model_name):
+
+    model_params_list = list(model.named_parameters())
+
+    # saving details
+    if not os.path.isdir( args.modelsummary_dir ):
+        os.mkdir(args.modelsummary_dir)
+
+    with open( os.path.join(args.modelsummary_dir, model_name + '.txt'), 'w') as summary:
+    # Record model details
+
+        summary.write("----------------------------------------------------------------\n")
+        line_new = "{:>20}  {:>25} {:>15}\n".format("Layer.Parameter", "Param Tensor Shape", "Param #")
+        summary.write(line_new)
+        summary.write("----------------------------------------------------------------\n")
+        for elem in model_params_list:
+            p_name = elem[0]
+            p_shape = list(elem[1].size())
+            p_count = torch.tensor(elem[1].size()).prod().item()
+            line_new = "{:>20}  {:>25} {:>15}\n".format(p_name, str(p_shape), str(p_count))
+            summary.write(line_new)
+        summary.write("----------------------------------------------------------------\n")
+        total_params = sum([param.nelement() for param in model.parameters()])
+        summary.write("Total params: {}\n".format(total_params))
+        num_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        summary.write("Trainable params: {}\n".format(num_trainable_params) )
+        summary.write("Non-trainable params: {}".format(total_params - num_trainable_params))
