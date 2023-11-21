@@ -217,7 +217,7 @@ def main(args, comp_args):
     
     # read the preprocessed dataset
     dataset_dir = args.dataset_dir
-    file_names = ['meshPEBI_train35_datahomo_coord_varsat_modelMGN_totalTs19_skip5_multistep1_distedge_ylabel_nonerelPerm.pt',
+    file_names = ['meshPEBI_train35_datahomo_coord_varsat_modelMGO_totalTs19_skip5_multistep1_distedge_ylabel_nonerelPerm.pt',
                   'meshPEBI_test50_datahomo_coord_varsat_modelMGO_totalTs19_skip5_multistep1_distedge_ylabel_nonerelPerm.pt']
     
     if args.use_agu_edge:
