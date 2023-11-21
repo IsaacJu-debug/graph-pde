@@ -13,7 +13,7 @@ from nn_conv import OperatorProcessorLayer
 from nn_conv import NNConv_NKN
 from egcl import E_GCL_GKN
 from timeit import default_timer
-
+import enum
 
 #################################################
 #
@@ -21,6 +21,19 @@ from timeit import default_timer
 #
 #################################################
 
+class NodeType(enum.IntEnum):
+    """
+    Define the code for the one-hot vector representing the node types.
+    Note that this is consistent with the codes provided in the original
+    MeshGraphNets study:
+    https://github.com/deepmind/deepmind-research/tree/master/meshgraphnets
+    """
+    NORMAL = 0
+    WELL = 1
+    FAULT = 2
+    BOUNDARY = 3
+    SIZE = 4
+    
 class KernelNN(torch.nn.Module):
     def __init__(self, width, ker_width, depth, ker_in, in_width=1, out_width=1):
         super(KernelNN, self).__init__()
@@ -45,25 +58,26 @@ class KernelNN(torch.nn.Module):
 
 
 class MeshGraphKernel(torch.nn.Module):
-    def __init__(self, width, ker_width, depth, ker_in, in_width=1, out_width=1):
+    def __init__(self, width, ker_width, depth, input_dim_node, input_dim_edge, output_dim):
         super(MeshGraphKernel, self).__init__()
         """
 
-        Input_dim: dynamic variables + node_type (node_position is encoded in edge attributes)
+        input_dim_node: dynamic variables + node_type (node_position is encoded in edge attributes)
+        input_dim_edge: edge feature dimension
         Hidden_dim: 128 in deepmind's paper
         Output_dim: dynamic variables: velocity changes (1)
 
         """
 
-        self.num_layers = args.depth
+        self.num_layers = depth
         # encoder convert raw inputs into latent embeddings
-        self.node_encoder = Sequential(Linear(in_width, width),
+        self.node_encoder = Sequential(Linear(input_dim_node, width),
                               ReLU(),
                               Linear( width, width),
                               LayerNorm(width))
         
         # edge and node has the same width
-        self.edge_encoder = Sequential(Linear( in_width , width),
+        self.edge_encoder = Sequential(Linear(input_dim_edge , width),
                               ReLU(),
                               Linear( width, width),
                               LayerNorm(width)
@@ -81,22 +95,28 @@ class MeshGraphKernel(torch.nn.Module):
         # decoder: only for node embeddings
         self.decoder = Sequential(Linear( width , width),
                               ReLU(),
-                              Linear( width, out_width)
+                              Linear( width, output_dim)
                               )
         
     def build_processor_model(self):
         return OperatorProcessorLayer
 
 
-    def forward(self, data):
+    def forward(self, data, mean_vec_x=None, std_vec_x=None, mean_vec_edge=None, std_vec_edge=None):
         """
         Encoder encodes graph (node/edge features) into latent vectors (node/edge embeddings)
         The return of processor is fed into the processor for generating new feature vectors
         """
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
         # Step 1: encode node/edge features into latent node/edge embeddings
+        if mean_vec_x != None:
+            x = normalize(x,mean_vec_x,std_vec_x)
+            
         x = self.node_encoder(x) # output shape is the specified hidden dimension
-
+        
+        if mean_vec_edge != None:
+            edge_attr = normalize(edge_attr, mean_vec_edge, std_vec_edge)
+            
         edge_attr = self.edge_encoder(edge_attr) # output shape is the specified hidden dimension
 
         # step 2: perform message passing with latent node/edge embeddings
@@ -107,7 +127,34 @@ class MeshGraphKernel(torch.nn.Module):
 
         return self.decoder(x)
 
+    def loss(self, pred, inputs, mean_vec_y=None,std_vec_y=None, num=0):
+        #Define the node types that we calculate loss for
+        #Get the loss mask for the nodes of the types we calculate loss for
+        #Need more delibrations
 
+        '''
+        if (self.data_type.upper() == 'HEXA'):
+            well_loss_mask = (torch.argmax(inputs.x[:,1:],dim=1)==torch.tensor(0)) # extra weight (well)
+            normal_loss_mask = (torch.argmax(inputs.x[:,1:],dim=1)==torch.tensor(1))
+
+        if (self.data_type.upper() == 'PEBI'):
+            # Hard-coded index for node type
+            well_loss_mask = torch.logical_or((torch.argmax(inputs.x[:,self.node_type_index:self.node_type_index + NodeType.SIZE],dim=1)==torch.tensor(NodeType.WELL)),
+                                             (torch.argmax(inputs.x[:,self.node_type_index:self.node_type_index + NodeType.SIZE],dim=1)==torch.tensor(NodeType.FAULT))) # extra weight (well)
+            normal_loss_mask = torch.logical_or((torch.argmax(inputs.x[:,self.node_type_index:self.node_type_index + NodeType.SIZE],dim=1)==torch.tensor(NodeType.NORMAL)),
+                                                (torch.argmax(inputs.x[:,self.node_type_index:self.node_type_index + NodeType.SIZE],dim=1)==torch.tensor(NodeType.BOUNDARY)))
+        '''
+        #Normalize labels with dataset statistics.
+        if mean_vec_y != None:
+            labels = normalize(inputs.y[:, num], mean_vec_y[num], std_vec_y[num]).unsqueeze(-1)
+
+        #Find sum of square errors
+        error=torch.sum((labels-pred)**2,axis=1)
+
+        #Root and mean the errors for the nodes we calculate loss for
+        loss=torch.sqrt(torch.mean(error))
+
+        return loss
 
 class MeshGraphNet(torch.nn.Module):
     def __init__(self, 
@@ -158,17 +205,21 @@ class MeshGraphNet(torch.nn.Module):
         return ProcessorLayer
 
 
-    def forward(self, data):
+    def forward(self, data, mean_vec_x=None, std_vec_x=None, mean_vec_edge=None, std_vec_edge=None):
         """
         Encoder encodes graph (node/edge features) into latent vectors (node/edge embeddings)
         The return of processor is fed into the processor for generating new feature vectors
         """
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
         # Step 1: encode node/edge features into latent node/edge embeddings
+        if mean_vec_x != None:
+            x = normalize(x,mean_vec_x,std_vec_x)
+            
         x = self.node_encoder(x) # output shape is the specified hidden dimension
-
-        edge_attr = self.edge_encoder(edge_attr) # output shape is the specified hidden dimension
-
+        
+        if mean_vec_edge != None:
+            edge_attr = normalize(edge_attr, mean_vec_edge, std_vec_edge)
+            
         # step 2: perform message passing with latent node/edge embeddings
         for i in range(self.num_layers):
             x,edge_attr = self.processor[i](x,edge_index,edge_attr)
@@ -176,7 +227,36 @@ class MeshGraphNet(torch.nn.Module):
         # step 3: decode latent node embeddings into physical quantities of interest
 
         return self.decoder(x)
+    
+    def loss(self, pred, inputs, mean_vec_y=None,std_vec_y=None, num=0):
+        #Define the node types that we calculate loss for
+        #Get the loss mask for the nodes of the types we calculate loss for
+        #Need more delibrations
+        
+        '''
+        if (self.data_type.upper() == 'HEXA'):
+            well_loss_mask = (torch.argmax(inputs.x[:,1:],dim=1)==torch.tensor(0)) # extra weight (well)
+            normal_loss_mask = (torch.argmax(inputs.x[:,1:],dim=1)==torch.tensor(1))
 
+        if (self.data_type.upper() == 'PEBI'):
+            # Hard-coded index for node type
+            well_loss_mask = torch.logical_or((torch.argmax(inputs.x[:,self.node_type_index:self.node_type_index + NodeType.SIZE],dim=1)==torch.tensor(NodeType.WELL)),
+                                             (torch.argmax(inputs.x[:,self.node_type_index:self.node_type_index + NodeType.SIZE],dim=1)==torch.tensor(NodeType.FAULT))) # extra weight (well)
+            normal_loss_mask = torch.logical_or((torch.argmax(inputs.x[:,self.node_type_index:self.node_type_index + NodeType.SIZE],dim=1)==torch.tensor(NodeType.NORMAL)),
+                                                (torch.argmax(inputs.x[:,self.node_type_index:self.node_type_index + NodeType.SIZE],dim=1)==torch.tensor(NodeType.BOUNDARY)))
+        '''
+        #Normalize labels with dataset statistics.
+        if mean_vec_y != None:
+            labels = normalize(inputs.y[:, num],mean_vec_y[num],std_vec_y[num]).unsqueeze(-1)
+        
+        #Find sum of square errors
+        error=torch.sum((labels-pred)**2,axis=1)
+
+        #Root and mean the errors for the nodes we calculate loss for
+        loss=torch.sqrt(torch.mean(error))
+
+        return loss
+    
 
 
 class NolocalKernelNN(torch.nn.Module):
