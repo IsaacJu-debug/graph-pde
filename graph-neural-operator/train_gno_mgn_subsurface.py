@@ -99,7 +99,7 @@ def train(train_loader,
                 noise = torch.normal(zero_size, std=args.noise_scale)
                 # saturation
                 batch.x[:, 0] += noise
-                batch.y[:, num] += noise
+                batch.y[:, 0] += noise
 
             out = model(batch, mean_vec_x,std_vec_x,mean_vec_edge,
                                             std_vec_edge) # needs to rescale data
@@ -187,29 +187,36 @@ def test(test_loader_list, args, device, model, stats_list, myloss):
     
     model = model.to(device)
     test_res_size = len(test_loader_list)
-    test_loss_array = np.zeros([test_res_size])
+    test_loss_array = np.zeros([test_res_size]) # test loss 
+    test_eval_loss_array = np.zeros([test_res_size]) # evaluation loss; rescaled to physical units
     batch_size2 = args.batch_size2
     with torch.no_grad():
         for i in range(test_res_size):
             test_loss = 0.0
+            test_eval_loss = 0.0
             loop_num = 0
+
             for batch in test_loader_list[i]:
                 batch.to(device)
                 out = model(batch)
                 #test_l2 = myloss(unnormalize(out.squeeze(), mean_vec_y, std_vec_y),
                 #        unnormalize(batch.y.squeeze(), mean_vec_y, std_vec_y))
                 
+                loss = model.loss(out, batch, mean_vec_y, std_vec_y, num = 0) # rmse of scaled data
+                # evaluation loss
                 model_sh = unnormalize( out.squeeze(), mean_vec_y[0], std_vec_y[0] )
                 gs_sh = batch.y[:, 0].squeeze()
                 error_sh = (model_sh - gs_sh)** 2
                 sh_rmse = torch.sqrt(torch.mean(error_sh))
                 
-                test_loss += sh_rmse.item()
+                test_loss += loss.item()
+                test_eval_loss += sh_rmse.item()
                 loop_num += 1
                 
             test_loss_array[i] = test_loss / loop_num
+            test_eval_loss_array[i] = test_eval_loss / loop_num
 
-    return test_loss_array
+    return test_loss_array, test_eval_loss_array
 
 ############################### Setup hyperparameters ##############################
 def main(args, comp_args):
