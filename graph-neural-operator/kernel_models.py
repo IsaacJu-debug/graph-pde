@@ -61,7 +61,6 @@ class MeshGraphKernel(torch.nn.Module):
     def __init__(self, width, ker_width, depth, input_dim_node, input_dim_edge, output_dim):
         super(MeshGraphKernel, self).__init__()
         """
-
         input_dim_node: dynamic variables + node_type (node_position is encoded in edge attributes)
         input_dim_edge: edge feature dimension
         Hidden_dim: 128 in deepmind's paper
