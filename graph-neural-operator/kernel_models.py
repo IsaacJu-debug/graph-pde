@@ -218,7 +218,8 @@ class MeshGraphNet(torch.nn.Module):
         
         if mean_vec_edge != None:
             edge_attr = normalize(edge_attr, mean_vec_edge, std_vec_edge)
-            
+        
+        edge_attr = self.edge_encoder(edge_attr) # output shape is the specified hidden dimension
         # step 2: perform message passing with latent node/edge embeddings
         for i in range(self.num_layers):
             x,edge_attr = self.processor[i](x,edge_index,edge_attr)

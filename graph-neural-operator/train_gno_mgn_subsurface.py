@@ -133,15 +133,18 @@ def train(train_loader,
 
         # Test the model periodically and log the metrics
         if epoch % 10 == 0:
-            test_loss_array = test(test_loader_list, args, device, model, stats_list, myloss)
+            test_loss_array, test_eval_loss_array = test(test_loader_list, args, device, model, stats_list, myloss)
             test_loss = np.sum(test_loss_array)
+            test_eval_loss = np.sum(test_loss_array)
             # Log the max test loss to wandb
             #wandb.log({"epoch": epoch, "combined_test_loss": test_loss})
 
             # Log each individual test loss
             wandb.log({
                 "test_loss_1": test_loss_array[0],
-                "test_loss_2": test_loss_array[1]  # superresolution
+                "test_loss_2": test_loss_array[1],
+                "test_eval_loss_1": test_eval_loss_array[0],
+                "test_eval_loss_2": test_eval_loss_array[1]                 # superresolution
             })
             
             # Save the model checkpoint with wandb
@@ -155,9 +158,10 @@ def train(train_loader,
                     wandb.save(PATH)
         
         # Log the training and test loss to wandb
-        wandb.log({"train_sh_loss": round(train_sh_rmse, 5),
-                   "train_rmse": round(train_rmse, 5),
-                   "test_loss": round(test_loss.item(), 5)})
+        wandb.log({"train_eval_loss": round(train_sh_rmse, 5),
+                   "train_loss": round(train_rmse, 5),
+                   "test_loss": round(test_loss, 5),
+                  "test_eval_loss": round(test_eval_loss, 5)})
         
         if(epoch%100==0):
             #print("train loss", str(round(total_loss,2)), "test loss", str(round(test_loss.item(),2)))
@@ -224,8 +228,8 @@ def main(args, comp_args):
     
     # read the preprocessed dataset
     dataset_dir = args.dataset_dir
-    file_names = ['meshPEBI_train35_datahomo_coord_varsat_modelMGO_totalTs19_skip5_multistep1_distedge_ylabel_nonerelPerm.pt',
-                  'meshPEBI_test50_datahomo_coord_varsat_modelMGO_totalTs19_skip5_multistep1_distedge_ylabel_nonerelPerm.pt']
+    file_names = ['meshPEBI_train35_datahomo_varsat_modelMGN_totalTs19_skip5_multistep1_distedge_ylabel_nonerelPerm.pt',
+                  'meshPEBI_test50_datahomo_varsat_modelMGN_totalTs19_skip5_multistep1_distedge_ylabel_nonerelPerm.pt']
     
     if args.use_agu_edge:
         # use equivarience gnn by augmenting dataset
@@ -258,7 +262,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     
     # Model and data-related arguments
-    parser.add_argument('--model', type=str, default='mgo', help='Model identifier.')
+    parser.add_argument('--model', type=str, default='mgn', help='Model identifier.')
     parser.add_argument('--data_type', type=str, default='pebi_fractured', help='Type of data.')
     parser.add_argument('--width', type=int, default=64, help='Width parameter.')  # Replace 128 with actual default value
     parser.add_argument('--ker_width', type=int, default=200, help='Kernel width.')  # Replace 256 with actual default value
@@ -267,7 +271,7 @@ if __name__ == '__main__':
     parser.add_argument('--noise_scale', type=float, help='', default=0.003) # noise scale
     
     # Training process control arguments
-    parser.add_argument('--use_kernel', action='store_true', default=True, help='Flag to use kernel.')
+    parser.add_argument('--use_kernel', action='store_true', default=False, help='Flag to use kernel.')
     parser.add_argument('--depth', type=int, default=3, help='Depth parameter.')  # Replace 3 with actual default value
     parser.add_argument('--batch_size', type=int, default=5, help='Batch size.')  # Replace 32 with actual default value
     parser.add_argument('--ntrain', type=int, default=1900, help='Number of training samples.')  # Replace 10000 with actual default value
