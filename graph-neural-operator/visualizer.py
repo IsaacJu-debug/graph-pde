@@ -7,7 +7,8 @@ import torch
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import copy
 import h5py
-
+from utilities import unnormalize
+import time
 
 def make_animation_lstm(gs_loader, pred_loader, evl_loader, rmse_var, path, name, args, 
                         skip = 2, save_anim = True, plot_variables = False,
@@ -27,11 +28,8 @@ def make_animation_lstm(gs_loader, pred_loader, evl_loader, rmse_var, path, name
     evl = evl_loader[0]
     '''
     input gs is a dataloader and each entry contains attributes of many timesteps.
-
     '''
     print('Generating {} fields...'.format(name))
-    #fig, axes = plt.subplots(1, 3, figsize=(36, 10))
-    # currently only support outputting one mesh at a time
     num_steps = gs.y.shape[1] # for a single trajectory
     num_frames = num_steps // skip
     print(num_steps)
@@ -139,10 +137,11 @@ def make_animation_lstm(gs_loader, pred_loader, evl_loader, rmse_var, path, name
         writergif = animation.PillowWriter(fps=10) 
         anim_path = os.path.join(path, '{}_anim.gif'.format(name))
         gs_anim.save( anim_path, writer=writergif, dpi = 50)
-        plt.show(block=True)
+        #plt.show(block=True)
     else:
         pass
-
+    
+    return anim_path
 
 def make_animation_onestep(gs, pred, evl, rmse_var, path, name , args,
                            skip = 2, save_anim = True, plot_variables = False, traj_num = 0):
@@ -265,19 +264,20 @@ def make_animation_onestep(gs, pred, evl, rmse_var, path, name , args,
         writergif = animation.PillowWriter(fps=10) 
         anim_path = os.path.join(path, '{}_anim.gif'.format(name))
         gs_anim.save( anim_path, writer=writergif)
-        plt.show(block=True)
+        #plt.show(block=True)
     else:
         pass
 
+    return anim_path
 
-def visualize(loader, best_model, file_dir, args, gif_name, stats_list, comp_args, sequntial = True,
+def visualize(loader, best_model, file_dir, args, gif_name, stats_list, comp_args, sequential = True,
+              device = 'cpu',
               rolling_out = False,
               make_movie = True, plot_rmse = False,
               delta_t = 0.01, skip = 1, traj_num = 0 , save_vtk = False):
 
     gif_name = 'Mesh{}'.format(str(traj_num)) + '_' + gif_name
     best_model.eval()
-    device = args.device
     rmse_var = []
     relative_err_var = []
     viz_data = {}
@@ -301,17 +301,17 @@ def visualize(loader, best_model, file_dir, args, gif_name, stats_list, comp_arg
 
     for data, viz_data, gs_data, eval_data, i in zip( loader, viz_data_loader,
                                                   gs_data_loader, eval_data_loader, range(len(loader))):    
-        data=data.to(args.device) 
-        viz_data = viz_data.to(args.device)
+        data=data.to(device) 
+        viz_data = viz_data.to(device)
 
         tmp_data = copy.deepcopy(viz_data)
-        gs_data = gs_data.to(args.device)
+        gs_data = gs_data.to(device)
         
         with torch.no_grad():
             for num in range(args.rollout_num):
                 # onestep only has 1 rollout 
                 # sequential model has many rollouts, but only take in one mesh at one time
-                if (sequntial):
+                if (sequential):
                     if (num == 0):
                         h_0 = torch.zeros(data.x.shape[0], args.hidden_dim).to(device)
                         c_0 = torch.zeros(data.x.shape[0], args.hidden_dim).to(device)
@@ -323,15 +323,15 @@ def visualize(loader, best_model, file_dir, args, gif_name, stats_list, comp_arg
                     pred = best_model(tmp_data, mean_vec_x,std_vec_x,
                                                 mean_vec_edge,std_vec_edge)
                 
-                tmp_data.x[:, 0] = stats.unnormalize( pred.squeeze(), mean_vec_y[0], std_vec_y[0] )
+                tmp_data.x[:, 0] = unnormalize( pred.squeeze(), mean_vec_y[0], std_vec_y[0] )
                 if (args.rela_perm.lower() != 'none'):
                     #print('sg mean {}'.format(torch.mean(batch_tmp.x[:, 0])))
-                    gs_rela_perm, _ = uti_func.calc_rela_perm(args, comp_args, tmp_data.x[:, 0], 1. - tmp_data.x[:, 0])  # calculate gs rela perm
+                    gs_rela_perm, _ = utilities.calc_rela_perm(args, comp_args, tmp_data.x[:, 0], 1. - tmp_data.x[:, 0])  # calculate gs rela perm
                     #print(gs_rela_perm.shape)
                     #print(torch.mean(gs_rela_perm))
                     tmp_data.x[:, -1] = gs_rela_perm              # update cell-wise rela perm
 
-                viz_data.y[:, num]= stats.unnormalize( pred.squeeze(), mean_vec_y[0], std_vec_y[0] )
+                viz_data.y[:, num]= unnormalize( pred.squeeze(), mean_vec_y[0], std_vec_y[0] )
                 
                 # gs_data - viz_data = error_data
                 eval_data.y[:, num] = (viz_data.y[:, num] - data.y[:, num])
@@ -354,7 +354,7 @@ def visualize(loader, best_model, file_dir, args, gif_name, stats_list, comp_arg
 
                 # pred gives the learnt saturation changes between two timsteps  
               
-            if (sequntial):
+            if (sequential):
                 del tmp_data
                 del h_0
                 del c_0
@@ -369,19 +369,43 @@ def visualize(loader, best_model, file_dir, args, gif_name, stats_list, comp_arg
         print('Finish writing {}'.format(file_name))
 
     if (make_movie):
-        if (sequntial or rolling_out):
+        if (sequential or rolling_out):
             # lstm 
             # one mesh; multiple ys
-            make_animation_lstm(gs_data_loader, viz_data_loader, eval_data_loader, rmse_var, file_dir,
+            anim_path = make_animation_lstm(gs_data_loader, viz_data_loader, eval_data_loader, rmse_var, file_dir,
                           gif_name, args, skip, True, plot_rmse, traj_num)
         else:
             # one-step
             # multiple mesh; one y
-            make_animation_onestep(gs_data_loader, viz_data_loader, eval_data_loader, rmse_var, file_dir,
+            anim_path = make_animation_onestep(gs_data_loader, viz_data_loader, eval_data_loader, rmse_var, file_dir,
                       gif_name,args, skip, True, plot_rmse, traj_num)
 
-    return eval_data_loader, rmse_var, relative_err_var
+    return eval_data_loader, rmse_var, relative_err_var, anim_path
 
-
+def visualize_one_step_rollout(args, model, dataset, stats_list, comp_args,
+                               anim_caption, mesh_num, wandb=None, mode="train"):
+    # args: input arguements
+    # visualize simple simulation rollout on top of mesh 
+    # Start time
+    start_time = time.time()
+    model = model.to(torch.device('cpu')) # animation function cannot work with data on GPU
+    tmp_rollout_num = args.rollout_num
+    args.rollout_num = 1
+    _, _, _, anim_path = visualize(dataset, model, args.postprocess_dir, args, anim_caption, stats_list, comp_args,
+                                         sequential = False,
+                                         make_movie = True, rolling_out=False, traj_num= mesh_num,
+                                         skip = 1, plot_rmse = True, save_vtk = False)
+    args.rollout_num = tmp_rollout_num
+    # End time
+    end_time = time.time()
+    
+    # Calculate duration
+    duration = end_time - start_time
+    # Print and optionally return the duration along with anim_caption
+    print(f"The visualization for '{anim_caption}' took {duration:.2f} seconds.")
+    
+    if wandb is not None:
+        wandb.log({mode: [wandb.Video(anim_path, caption=anim_caption)]})
+    
 if __name__ == '__main__':
     pass

@@ -3,6 +3,7 @@ import numpy as np
 import os
 import argparse
 import random
+import itertools
 
 import torch.nn.functional as F
 from torch.nn import Sequential, Linear, ReLU, LayerNorm
@@ -17,6 +18,7 @@ import pandas as pd
 import copy
 import wandb
 
+import visualizer as viz
 
 class objectview(object):
     def __init__(self, d):
@@ -26,8 +28,9 @@ class objectview(object):
 def train(train_loader, 
           test_loader_list,
           stats_list, 
+          eval_datasets,
           device, 
-          args,  
+          args, comp_args,
           PATH=None):
 
     # Initialize a new wandb run
@@ -81,6 +84,9 @@ def train(train_loader,
         std_vec_x.to(device),mean_vec_edge.to(device),std_vec_edge.to(device),mean_vec_y.to(device),std_vec_y.to(device))
     
     best_test_loss = np.inf
+    best_train_loss = np.inf
+    test_batch_list = []
+    train_batch = None
     model.train()
     
     for epoch in trange(args.epochs, desc="Training", unit="Epochs"):
@@ -132,7 +138,7 @@ def train(train_loader,
         #wandb.log({"epoch": epoch, "train_loss": train_loss, "train_mse": train_mse})
 
         # Test the model periodically and log the metrics
-        if epoch % 10 == 0:
+        if epoch % args.test_freq == 0:
             test_loss_array, test_eval_loss_array = test(test_loader_list, args, device, model, stats_list, myloss)
             test_loss = np.sum(test_loss_array)
             test_eval_loss = np.sum(test_loss_array)
@@ -156,7 +162,30 @@ def train(train_loader,
                 # Save the model using the wandb save function
                 if PATH is not None:
                     wandb.save(PATH)
-        
+                    
+        if epoch % args.eval_freq == 0:
+            
+            if train_rmse < best_train_loss:
+                # This might be useful to see how overfitting the model is
+                best_train_loss = train_rmse
+                best_train_model = copy.deepcopy(model)
+                wandb.run.summary["best_train_loss"] = best_train_loss
+
+                # Save the model using the wandb save function
+                if PATH is not None:
+                    wandb.save(PATH)
+            
+            # visualize model with best test loss
+            test_anim_caption_list = ['test35_model_epoch{}'.format(epoch), 'test50_model_epoch{}'.format(epoch)]
+            for i, caption in enumerate(test_anim_caption_list):
+                viz.visualize_one_step_rollout(args, best_model, eval_datasets[i], stats_list, comp_args,
+                                               caption, 0, wandb, mode=caption[:6])
+            
+            # visualize model with best test loss
+            train_anim_model = 'train35_model_epoch{}'.format(epoch)
+            viz.visualize_one_step_rollout(args, best_train_model, eval_datasets[2], stats_list, comp_args,
+                                           train_anim_model, args.mesh_num, wandb, mode="train35")
+            
         # Log the training and test loss to wandb
         wandb.log({"train_eval_loss": round(train_sh_rmse, 5),
                    "train_loss": round(train_rmse, 5),
@@ -171,9 +200,7 @@ def train(train_loader,
                 
 
     wandb.finish()  # Finish the wandb run
-    
     return best_model, best_test_loss
-
 
 def test(test_loader_list, args, device, model, stats_list, myloss):
     '''
@@ -228,8 +255,8 @@ def main(args, comp_args):
     
     # read the preprocessed dataset
     dataset_dir = args.dataset_dir
-    file_names = ['meshPEBI_train35_datahomo_varsat_modelMGN_totalTs19_skip5_multistep1_distedge_ylabel_nonerelPerm.pt',
-                  'meshPEBI_test50_datahomo_varsat_modelMGN_totalTs19_skip5_multistep1_distedge_ylabel_nonerelPerm.pt']
+    file_names = ['meshPEBI_train35_datahomo_coord_varsat_modelMGO_totalTs19_skip5_multistep1_distedge_ylabel_nonerelPerm.pt',
+                  'meshPEBI_test50_datahomo_coord_varsat_modelMGO_totalTs19_skip5_multistep1_distedge_ylabel_nonerelPerm.pt']
     
     if args.use_agu_edge:
         # use equivarience gnn by augmenting dataset
@@ -238,11 +265,18 @@ def main(args, comp_args):
     # Load data using the selected file names
     # be careful these data has not been scaled, needs to be scaled
     train_dataset = torch.load(os.path.join(dataset_dir, file_names[0]))
-    train_loader35 = DataLoader(train_dataset[:args.ntrain], batch_size=args.batch_size, shuffle=False)
-    test_loader35 = DataLoader(train_dataset[-args.ntest:], batch_size=args.batch_size, shuffle=False)
+    train_loader35 = DataLoader(train_dataset[:args.ntrain*args.rollout_num], batch_size=args.batch_size, shuffle=False)
+    test_loader35 = DataLoader(train_dataset[args.ntrain*args.rollout_num:(args.ntrain + args.ntest)*args.rollout_num], batch_size=args.batch_size, shuffle=False)
     
-    test_loader50 = DataLoader(torch.load(os.path.join(dataset_dir, file_names[1])), batch_size=args.batch_size2, shuffle=False)
+    test_dataset = torch.load(os.path.join(dataset_dir, file_names[1]))
+    test_loader50 = DataLoader(test_dataset, batch_size=args.batch_size2, shuffle=False)
     train35_stats_list = get_stats(train_dataset, args, comp_args, use_single_dist = False)
+    
+    eval_train35_dataset = train_dataset[args.mesh_num*args.rollout_num: (args.mesh_num+1)*args.rollout_num]
+    eval_test35_dataset = train_dataset[(args.ntrain + args.mesh_num)*args.rollout_num: (args.ntrain + args.mesh_num+1)*args.rollout_num]
+    eval_test50_dataset = test_dataset[args.mesh_num*args.rollout_num: (args.mesh_num+1)*args.rollout_num]
+    eval_datasets = [ eval_test35_dataset, eval_test50_dataset, eval_train35_dataset]
+    
     device = args.device if torch.cuda.is_available() else 'cpu'
     #args.device = device
     print('Getting {}...'.format(device))
@@ -252,8 +286,9 @@ def main(args, comp_args):
     best_model, best_test_loss = train(train_loader35,
                                     test_loader_list,
                                     train35_stats_list,  # contain the scaling factors for all node and edge features
+                                    eval_datasets,
                                     device,
-                                    args, 
+                                    args, comp_args, 
                                     PATH=None)
 
 
@@ -269,24 +304,29 @@ if __name__ == '__main__':
     parser.add_argument('--use_agu_edge',action='store_true', default=False, help='Flag to use equivarience-augemented edge features.')
     parser.add_argument('--noise', action='store_true', help='', default=False) # inject noise for one-step predictions
     parser.add_argument('--noise_scale', type=float, help='', default=0.003) # noise scale
+    parser.add_argument('--rollout_num', type=int, default=19, help='Number of rollout.')
+    parser.add_argument('--well_weight', type=float, help='', default=0.700)
+    parser.add_argument('--node_type_index', type=int, help='', default=6) # the starting index of node type, used for locating speical nodes
+                                                                               # current version: [x, y, sh, perm , poro, volume, type0, type1, type2, type3]
     
     # Training process control arguments
     parser.add_argument('--use_kernel', action='store_true', default=False, help='Flag to use kernel.')
     parser.add_argument('--depth', type=int, default=3, help='Depth parameter.')  # Replace 3 with actual default value
     parser.add_argument('--batch_size', type=int, default=5, help='Batch size.')  # Replace 32 with actual default value
-    parser.add_argument('--ntrain', type=int, default=1900, help='Number of training samples.')  # Replace 10000 with actual default value
+    parser.add_argument('--ntrain', type=int, default=400, help='Number of training meshes.')  # Replace 10000 with actual default value
     parser.add_argument('--k', type=int, default=1, help='Number of output.')  # Replace 5 with actual default value
     parser.add_argument('--r', type=int, default=4, help='Radius of stencil.')  # Replace 5 with actual default value
     
-    parser.add_argument('--ntest', type=int, default=190, help='Number of test samples.')  # Replace 2000 with actual default value
+    parser.add_argument('--ntest', type=int, default=50, help='Number of test meshes.')  # Replace 2000 with actual default value
     parser.add_argument('--batch_size2', type=int, default=1, help='Secondary batch size.')  # Replace 32 with actual default value
-
+    
     # Feature-related arguments
     parser.add_argument('--edge_features', type=int, default=3, help='Number of edge features.')  # Replace 6 with actual default value
-    parser.add_argument('--node_features', type=int, default=10, help='Number of node features.')  # Replace 6 with actual default value
+    parser.add_argument('--node_features', type=int, default=10, help='Number of node features.')  # [x, y, sh, perm , poro, volume, type0, type1, type2, type3]
     parser.add_argument('--output_features', type=int, default=1, help='Number of label features.')  # Replace 6 with actual default value
     parser.add_argument('--rela_perm', type=str, default='none', help='Flag for using relative permeability as edge feature')
-
+    parser.add_argument('--var_type', type=str, default='sat', help='Physical meaning of output label')
+    
     # Training hyperparameters
     parser.add_argument('--epochs', type=int, default=400, help='Number of epochs.')
     parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate.')
@@ -300,6 +340,9 @@ if __name__ == '__main__':
     parser.add_argument('--no_wandb', action='store_true', default=True, help='Flag to not use Weights & Biases.')
     parser.add_argument('--online', action='store_true', default=True, help='Flag for online mode.')
     parser.add_argument('--project_name', type=str, default='gno_project', help='wandb project names.')
+    parser.add_argument('--test_freq', type=int, default=10, help='Interval for evaluating test cases.')
+    parser.add_argument('--eval_freq', type=int, default=50, help='Interval for evaluating rollout results.')
+    parser.add_argument('--mesh_num', type=int, default=0, help='Mesh number for demonstration.')
     
     # Experiment and output directory arguments
     parser.add_argument('--dataset_dir', type=str, default='./datasets/', help='Directory for saving datasets.')

@@ -171,7 +171,9 @@ class MeshGraphNet(torch.nn.Module):
         """
 
         self.num_layers = args.depth
-
+        self.node_type_index = args.node_type_index
+        self.well_weight = args.well_weight
+        
         # encoder convert raw inputs into latent embeddings
         self.node_encoder = Sequential(Linear(input_dim_node , hidden_dim),
                               ReLU(),
@@ -228,23 +230,18 @@ class MeshGraphNet(torch.nn.Module):
 
         return self.decoder(x)
     
+    '''
     def loss(self, pred, inputs, mean_vec_y=None,std_vec_y=None, num=0):
         #Define the node types that we calculate loss for
         #Get the loss mask for the nodes of the types we calculate loss for
         #Need more delibrations
         
-        '''
-        if (self.data_type.upper() == 'HEXA'):
-            well_loss_mask = (torch.argmax(inputs.x[:,1:],dim=1)==torch.tensor(0)) # extra weight (well)
-            normal_loss_mask = (torch.argmax(inputs.x[:,1:],dim=1)==torch.tensor(1))
-
         if (self.data_type.upper() == 'PEBI'):
             # Hard-coded index for node type
             well_loss_mask = torch.logical_or((torch.argmax(inputs.x[:,self.node_type_index:self.node_type_index + NodeType.SIZE],dim=1)==torch.tensor(NodeType.WELL)),
                                              (torch.argmax(inputs.x[:,self.node_type_index:self.node_type_index + NodeType.SIZE],dim=1)==torch.tensor(NodeType.FAULT))) # extra weight (well)
             normal_loss_mask = torch.logical_or((torch.argmax(inputs.x[:,self.node_type_index:self.node_type_index + NodeType.SIZE],dim=1)==torch.tensor(NodeType.NORMAL)),
                                                 (torch.argmax(inputs.x[:,self.node_type_index:self.node_type_index + NodeType.SIZE],dim=1)==torch.tensor(NodeType.BOUNDARY)))
-        '''
         #Normalize labels with dataset statistics.
         if mean_vec_y != None:
             labels = normalize(inputs.y[:, num],mean_vec_y[num],std_vec_y[num]).unsqueeze(-1)
@@ -256,7 +253,30 @@ class MeshGraphNet(torch.nn.Module):
         loss=torch.sqrt(torch.mean(error))
 
         return loss
+    '''
     
+    def loss(self, pred, inputs,mean_vec_y,std_vec_y, num=0):
+        #Define the node types that we calculate loss for
+        #Get the loss mask for the nodes of the types we calculate loss for
+        #Need more delibrations
+        # Hard-coded index for node type
+        well_loss_mask = torch.logical_or((torch.argmax(inputs.x[:,self.node_type_index:self.node_type_index + NodeType.SIZE],dim=1)==torch.tensor(NodeType.WELL)),
+                                         (torch.argmax(inputs.x[:,self.node_type_index:self.node_type_index + NodeType.SIZE],dim=1)==torch.tensor(NodeType.FAULT))) # extra weight (well)
+        normal_loss_mask = torch.logical_or((torch.argmax(inputs.x[:,self.node_type_index:self.node_type_index + NodeType.SIZE],dim=1)==torch.tensor(NodeType.NORMAL)),
+                                            (torch.argmax(inputs.x[:,self.node_type_index:self.node_type_index + NodeType.SIZE],dim=1)==torch.tensor(NodeType.BOUNDARY)))
+
+        #Normalize labels with dataset statistics.
+        labels = normalize(inputs.y[:, num],mean_vec_y[num],std_vec_y[num]).unsqueeze(-1)
+
+        #Find sum of square errors
+        error=torch.sum((labels-pred)**2,axis=1)
+
+        #Root and mean the errors for the nodes we calculate loss for
+        loss=torch.sqrt(torch.mean(error[normal_loss_mask])) + \
+        self.well_weight * torch.sqrt(torch.mean(error[well_loss_mask]))
+        #loss=torch.sqrt(torch.mean(error))
+
+        return loss
 
 
 class NolocalKernelNN(torch.nn.Module):
